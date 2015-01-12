@@ -1,0 +1,58 @@
+This scheme will not work.
+To understand why, look at the transformations that happens during evaluation.
+
+(define (solve f y0 dt)
+  (define y (integral (delay dy) y0 dt))
+  (define dy (stream-map f y))
+  y)
+
+The first transformation is from internal define into let:
+
+(define (solve f y0 dt)
+  (let ((y '*unassigned*)
+        (dy '*unassigned*))
+    (let ((a (integral (delay dy) y0 dt))
+          (b (stream-map f y)))
+      (set! y a)
+      (set! dy b))
+    y))
+
+The the let expressions are transformed into lambda expressions giving:
+
+(define (solve f y0 dt)
+  ((lambda (y dy)
+     ((lambda (a b)
+        (set! y a)
+        (set! dy b))
+      (integral (delay dy) y0 dt)
+      (stream-map f y))
+     y)
+  '*unassigned
+  '*unassigned))
+
+The arguments for the outer (lambda (y dy)..) are both '*unassigned.
+The arguments for the inner (lambda (a b)..) are (integral (delay dy) yo dt) and (stream-map f y)
+At this point in the evaluation both y and dy are still '*unassigned so this kind of transformation will not work.
+
+ 
+
+Compare this with the original transform suggested and the procedure evaluates to:
+
+(define (solve f y0 dt)
+  (let ((y '*unassigned*)
+        (dy '*unassigned*))
+    (set! y (integral (delay dy) y0 dt))
+    (set! dy (stream-map f y))
+    y))
+
+Which in turn becomes
+
+(define (solve f y0 dt)
+  ((lambda (y dy)
+     (set! y (integral (delay dy) y0 dt))
+     (set! dy (stream-map f y))
+     y)
+   '*unassigned
+   '*unassigned))
+
+This transformations will work as expected i.e. simultaneously and not serially.

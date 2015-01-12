@@ -1,0 +1,185 @@
+;;TODO: implement for, do, until
+
+;;; implemented as special forms in evaluator
+(define (eval exp env)
+  (cond ((self-evaluating? exp) exp)
+        ((variable? exp) (lookup-variable-value exp env))
+        ((quoted? exp) (text-of-quotation exp))
+        ((assignment? exp) (eval-assignment exp env))
+        ((definition? exp) (eval-definition exp env))
+        ((if? exp) (eval-if exp env))
+        ((lambda? exp)
+         (make-procedure (lambda-parameters exp)
+                         (lambda-body exp)
+                         env))
+        ((begin? exp)
+         (eval-sequence (begin-actions exp) env))
+        ((cond? exp) (eval (cond->if exp) env))
+        ((application? exp)
+         (apply (eval (operator exp) env)
+                (list-of-values (operands exp) env)))
+        ((and? exp) (eval-and exp env))
+        ((or? exp) (eval-or exp env))
+        ((let? exp) (eval (let->combination exp) env))
+        ((let*? exp) (eval (let*->nested-lets exp) env))
+        (else
+         (error "Unknown expression type - EVAL" exp))))
+
+(define (and? exp)
+  (tagged-list? exp 'and))
+(define (eval-and exp env)
+  (define (eval-and-operands operands)
+    (cond ((null? operands) true)
+          ((true? (eval (car operands) env))
+           (eval-and-operands (cdr operands)))
+          (else false)))
+  (eval-and-operands (cdr exp)))
+
+(define (or? exp)
+  (tagged-list? exp 'or))
+(define (eval-or exp env)
+  (define (eval-or-operands operands)
+    (cond ((null? operands) false)
+          ((true? (eval (car operands) env))
+           true)
+          (else
+           (eval-or-operands (cdr operands)))))
+  (eval-or-operands (cdr exp)))
+
+;;; as derived expressions
+
+(define (eval exp env)
+  (cond ((self-evaluating? exp) exp)
+        ((variable? exp) (lookup-variable-value exp env))
+        ((quoted? exp) (text-of-quotation exp))
+        ((assignment? exp) (eval-assignment exp env))
+        ((definition? exp) (eval-definition exp env))
+        ((if? exp) (eval-if exp env))
+        ((lambda? exp)
+         (make-procedure (lambda-parameters exp)
+                         (lambda-body exp)
+                         env))
+        ((begin? exp)
+         (eval-sequence (begin-actions exp) env))
+        ((cond? exp) (eval (cond->if exp) env))
+        ((application? exp)
+         (apply (eval (operator exp) env)
+                (list-of-values (operands exp) env)))
+        ((and? exp) (eval (and->if exp) env))
+        ((or? exp) (eval (or->if exp) env))
+        ((let? exp) (eval (let->combination exp) env))
+        ((let*? exp) (eval (let*->nested-lets exp) env))
+        ((for? exp) (eval (for-combination exp) env))
+        ((while? expr) (evaln (while->combination  expr) env))
+        (else
+         (error "Unknown expression type - EVAL" exp))))
+
+(define (and? exp)
+  (tagged-list? exp 'and))
+(define (and-clauses exp) (cdr exp))
+(define (expand-and-clauses clauses)
+  (if (null? clauses)
+      'true
+      (make-if (car clauses)
+               (expand-and-clauses (cdr clauses))
+               'false)))
+(define (and->if exp)
+  (expand-and-clauses (and-clauses exp)))
+                                        ;
+(define (or? exp)
+  (tagged-list? exp 'or))
+(define (or-clauses exp) (cdr exp))
+(define (expand-or-clauses clauses)
+  (if (null? clauses)
+      'false
+      (make-if (car clauses)
+               'true
+               (expand-or-clauses (cdr clauses)))))
+(define (or->if exp)
+  (expand-or-clauses (or-clauses exp)))
+
+;; (define (let? exp) (tagged-list? exp 'let))
+;; (define (let-assignment exp) (cadr exp))
+;; (define (let-body exp) (cddr exp))
+;; (define (let-exp assignment)
+;;   (if (null? assignment)
+;;       '()
+;;       (cons (cadr (car assignment))
+;;             (let-exp (cdr assignment)))))
+;; (define (let-var assignment)
+;;   (if (null? assignment)
+;;       '()
+;;       (cons (car (car assignment))
+;;             (let-var (cdr assignment)))))
+
+;; (define (let->combination exp)
+;;   (transform-let (let-assignment exp) (let-body exp)))
+;; (define (transform-let assignment body)
+;;   (cons (make-lambda (let-var assignment) body)
+;;         (let-exp assignment)))
+
+(define (named-let? expr) (and (let? expr) (symbol? (cadr expr))))
+(define (named-let-func-name expr) (cadr expr))
+(define (named-let-func-body expr) (cadddr expr))
+(define (named-let-func-parameters expr) (map car (caddr expr)))
+(define (named-let-func-inits expr) (map cadr (caddr expr)))
+(define (named-let->func expr)
+  (list 'define
+        (cons (named-let-func-name expr) (named-let-func-parameters expr))
+        (named-let-func-body expr)))
+
+(define (let->combination expr)
+  (if (named-let? expr)
+      (sequence->exp
+       (list (named-let->func expr)
+             (cons (named-let-func-name expr) (named-let-func-inits expr))))
+      (cons (make-lambda (let-vars expr)
+                         (list (let-body expr)))
+            (let-inits expr))))
+
+(define (let*? exp) (tagged-list? exp 'let*))
+(define (let*-assignment exp) (cadr exp))
+(define (let*-body exp) (cddr exp))
+
+(define (let*->nested-lets exp)
+  (transform-let* (let*-assignment exp) (let*-body exp)))
+(define (transform-let* assignment body)
+  (if (null? (cdr assignment))
+      (cons 'let (cons assignment body))
+      (list 'let (list (car assignment))
+            (transform-let* (cdr assignment) body))))
+
+(define (while? expr) (tagged-list? expr 'while)) 
+(define (while-condition expr) (cadr expr)) 
+(define (while-body expr) (caddr expr)) 
+(define (while->combination expr) 
+  (sequence->exp 
+   (list (list 'define  
+               (list 'while-iter) 
+               (make-if (while-condition expr)  
+                        (sequence->exp (list (while-body expr)  
+                                             (list 'while-iter))) 
+                        'true)) 
+         (list 'while-iter)))) 
+
+(define (for-var exp) (cadr exp))
+(define (for-init exp) (caddr exp))
+(define (for-limit exp) (cadddr exp))
+(define (for-body exp) (cddddr exp))
+
+(define (for->combination exp)
+  (list
+   (make-lambda '()
+                (list (list
+                       'define
+                       (list 'loop (for-var exp) 'n)
+                       (list 'if
+                             (list 'or
+                                   (list '< (for-var exp) 'n)
+                                   (list '= (for-var exp) 'n))
+                             (cons 'begin
+                                   (append (for-body exp)
+                                           (list (list 'loop
+                                                       (list '+ 1 (for-var exp))
+                                                       'n))))))
+                      (list 'loop (for-init exp) (for-limit exp))))))
